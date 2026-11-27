@@ -74,7 +74,7 @@ for base, dirs, files in os.walk(root,onerror=error,followlinks=False):
         if not k: continue
         g=groups[k]; g['files']+=1
         try:
-            if not stat.S_ISREG(os.lstat(path).st_mode): continue
+            if not stat.S_ISREG(os.lstat(path).st_mode): raise OSError('not a regular file or symbolic link')
             fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
             with os.fdopen(fd,'rb') as raw:
                 if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode): raise OSError('not a regular file')
@@ -182,6 +182,17 @@ if [[ $format != text ]]; then
 import json,sys,os
 with open(sys.argv[1]) as f: data=json.load(f)
 with open(sys.argv[2],encoding='utf-8',errors='replace') as f: data['report_text']=f.read()
+data['threats']=[]
+in_threats=False
+for line in data['report_text'].splitlines():
+    if line.startswith('=== '): in_threats=line=='=== Correlated threat analysis by IP ==='
+    if in_threats and ' IP=' in line:
+        fields=line.split()
+        counts={}
+        for field in fields[2:]:
+            key, value=field.split('=',1)
+            counts[key]=int(value)
+        data['threats'].append(dict(severity=fields[0],ip=fields[1][3:],counts=counts))
 with open(sys.argv[3],'x') as f: json.dump(data,f,ensure_ascii=True,indent=2)
 PY
  printf 'Report saved: %s\n' "$json_report"
