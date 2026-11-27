@@ -55,13 +55,13 @@ health() {
     return 1
 }
 recover() {
-    local rc=$?
+    local rc=$? remaining
     trap - EXIT INT TERM
     (( rc != 0 )) || return 0
     set +e
     echo "Update failed during $phase. Inspecting recovery options." >&2
     if [[ $phase == installing || $phase == starting ]]; then
-        if sudo systemctl stop "$service" && [[ -z $(sudo ss -H -ltn "sport = :$port")" && $? == 0 ]]; then
+        if sudo systemctl stop "$service" && remaining=$(sudo ss -H -ltn "sport = :$port") && [[ -z $remaining ]]; then
             if sudo install -m 755 -o root -g root -- "$backup" "$binary" &&
                sudo systemctl start "$service" && health; then
                 echo "Previous installed version restored." >&2
