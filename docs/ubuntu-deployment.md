@@ -276,6 +276,75 @@ This warning concerns an unrelated Ubuntu system unit, not Security Report Viewe
 
 Before exposing the application via Apache or another reverse proxy, implement authentication, session and CSRF protection, host validation, rate limiting, audit logging, report retention, sensitive-log redaction and configurable base paths. HTTPS alone is not sufficient.
 
+
+## 10. Frequently asked questions (FAQ)
+
+### Why does the SSH tunnel appear to hang?
+
+The SSH command uses -N, so it forwards traffic without opening a remote shell. Keep the terminal open and visit http://localhost:9080 in your local browser (or use your configured local forwarded port). Press Ctrl+C to close the tunnel when finished; the remote systemd service continues running.
+
+### Where is the generated TXT report? Why can't I see it?
+
+Reports generated using Run security scan are stored on the remote server in the reports directory relative to the service working directory. With the recommended systemd configuration, this is /opt/security-report-viewer/reports/.
+
+The directory is intentionally restricted to mode 0700 and reports to mode 0600, owned by securityviewer. Your normal SSH account may not be able to list or read them.
+
+```bash
+sudo ls -lah /opt/security-report-viewer/reports/
+sudo systemctl show security-report-viewer -p WorkingDirectory
+```
+
+To inspect a report, substitute its exact filename:
+
+```bash
+sudo less /opt/security-report-viewer/reports/security-report-EXACT-NAME.txt
+```
+
+Do not loosen the directory or report permissions just to browse the files. Uploaded reports processed with Analyse report are not automatically saved to this directory.
+
+### Why does Run security scan generate a report but show no findings?
+
+This occurred during an actual Ubuntu deployment: a TXT report was successfully saved, but the dashboard showed no data. The service account belonged only to its own group and could not read Apache logs:
+
+```text
+groups=994(securityviewer)
+ls: cannot open directory '/var/log/apache2/': Permission denied
+head: cannot open '/var/log/apache2/access.log' for reading: Permission denied
+```
+
+Diagnose the problem:
+
+```bash
+id securityviewer
+sudo -u securityviewer ls -lah /var/log/apache2/
+sudo -u securityviewer head -n 5 /var/log/apache2/access.log
+```
+
+On a typical Ubuntu installation, the adm group grants access to Apache and other system logs. If the service account is missing that membership and you authorize access to these sensitive logs, add it:
+
+```bash
+sudo usermod -aG adm securityviewer
+id securityviewer
+sudo -u securityviewer ls -lah /var/log/apache2/
+sudo -u securityviewer head -n 5 /var/log/apache2/access.log
+sudo systemctl restart security-report-viewer
+sudo systemctl status security-report-viewer
+```
+
+Restarting is necessary for the running service to acquire the new supplementary group membership. Refresh the local browser and run a new security scan. The existing report is not retroactively updated.
+
+This resolution was confirmed to work by the administrator during the deployment on 27 November 2026. No Rust rebuild, Apache change or new SSH tunnel was needed.
+
+If access is still denied, inspect directory and file ownership and permissions (for example, sudo namei -l /var/log/apache2/access.log). Log locations and permissions vary. Do not run the web application as root, make logs world-readable or use chmod 777. For logs requiring elevated access, use the reviewed standalone scanner manually and securely upload the report.
+
+### Does an empty dashboard mean the server is secure?
+
+No. Inspect the Scan coverage and metadata section in the generated report. Check scan_status, bytes_read, coverage counts (files, read, failed, lines) and errors. An empty dashboard may reflect insufficient access, unsupported log files or timestamps, no matching detection rules, or a parser/display issue. Even a complete scan with no detections does not prove that the server is secure.
+
+### What is the difference between Analyse report and Run security scan?
+
+Analyse report parses an existing uploaded TXT or JSON report and displays its findings; it does not scan system logs. Run security scan executes the integrated scanner on the host running the Rust service, saves a new TXT report and displays the parsed findings. Neither operation automatically blocks IP addresses or modifies system logs.
+
 ## Verification
 
 This is a manual deployment guide, not an automated installer. The configuration should be validated on the target Ubuntu host before relying on it. No deployment is performed by this document.
