@@ -28,6 +28,28 @@ cargo run --release
 
 Open **http://127.0.0.1:8080**. The application binds to loopback only. Try `sample-report.txt` before scanning live logs.
 
+## Manual scanning and report upload
+
+Use **Download security scanner** in the dashboard to obtain the exact bundled Bash script. Transfer it securely to the Linux host to be scanned, review it, and open a terminal there. From the directory containing the script:
+
+```bash
+chmod 700 security-log-scan-v2.sh
+script="$(realpath security-log-scan-v2.sh)"
+mkdir -p ~/security-reports
+chmod 700 ~/security-reports
+cd ~/security-reports
+bash "$script"
+```
+
+If authorised and necessary for protected logs, run `sudo /bin/bash "$script"` instead. The generated file will be root-owned; use the exact filename printed after **Report saved:** to change ownership of that file only:
+
+```bash
+sudo chown "$(id -u):$(id -g)" -- ./security-report-EXACT-NAME.txt
+chmod 600 ./security-report-EXACT-NAME.txt
+```
+
+Replace the example filename with the actual filename. Securely transfer the report to your browser's machine if needed, select it under **Upload a security report**, and click **Analyse report**. Do not run the Rust server as root. Treat report contents as sensitive; permission errors may indicate incomplete coverage.
+
 ## Scan configuration
 
 ```bash
