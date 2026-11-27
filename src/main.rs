@@ -9,9 +9,16 @@ struct Threat { ip:IpAddr, severity:String, counts:BTreeMap<String,u64> }
 struct Section { title:String, count:Option<u64>, lines:Vec<String> }
 const FIELDS:[&str;15]=["probes","SQL","sensitive","XSS/traversal","suspicious_2xx","suspicious_5xx","suspicious_403/404","other_status","SSH_fail","SSH_ok","SSH_ok_after_failure_in_input","HTTP_total","HTTP_403/404","HTTP_5xx","firewall"];
 fn parse(raw:&str)->Result<Report,String>{
+ let decoded;
+ let raw=if raw.trim_start().starts_with('{') {
+ let value:serde_json::Value=serde_json::from_str(raw).map_err(|e|e.to_string())?;
+ if value["schema_version"].as_u64()!=Some(3){return Err("Unsupported JSON schema".into())}
+ decoded=value["report_text"].as_str().ok_or("Missing report_text")?.to_owned();
+ decoded.as_str()
+ }else{raw};
  let mut r=Report::default(); let mut lines=raw.lines();
  let first=lines.next().unwrap_or("").trim_start_matches('\u{feff}');
- if !first.starts_with("SECURITY LOG SCAN v2.0") {return Err("Expected a security-log-scan-v2 report header.".into())} r.title=first.into();
+ if !first.starts_with("SECURITY LOG SCAN v2.0") && !first.starts_with("SECURITY LOG SCAN v3.0") {return Err("Expected a v2 or v3 scanner report header.".into())} r.title=first.into();
  let mut correlated=false;
  for line in lines { let line=line.trim(); if line.is_empty(){continue}
  if let Some(s)=line.strip_prefix("Source: "){r.source=s.into();continue}
@@ -30,6 +37,11 @@ fn parse(raw:&str)->Result<Report,String>{
  }}
  if !correlated{return Err("Missing correlated threat analysis section.".into())}
  if !r.sections.iter().any(|s|s.title=="Malware detection records" && s.count.is_some()){r.warnings.push("Malware section missing or incomplete; status unknown.".into())}
+ if let Some(s)=r.sections.iter().find(|s|s.title=="Scan coverage and metadata"){
+ if let Ok(m)=serde_json::from_str::<serde_json::Value>(&s.lines.join("\n")){
+ if m["scan_status"]!="complete"{r.warnings.push("Partial scan: review log coverage and metadata.".into());}
+ }else{r.warnings.push("Invalid scan coverage metadata.".into());}
+ }
  Ok(r)
 }
 async fn upload(mut m:Multipart)->Result<Json<Report>,(StatusCode,String)>{
@@ -77,8 +89,8 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  tokio::task::spawn_blocking(||{
  let _guard=SCAN_LOCK.try_lock().map_err(|_|(StatusCode::CONFLICT,"A scan is already running".into()))?;
  let dir=store()?;let temp=tempfile::Builder::new().prefix("scan-").tempdir_in(&dir).map_err(err)?;
- let script=temp.path().join("scanner.sh");fs::write(&script,include_str!("../security-log-scan-v2.sh")).map_err(err)?;
- let output=std::process::Command::new("/usr/bin/timeout").args(["--kill-after=5s","300s","/bin/bash"]).arg(&script).current_dir(temp.path()).env_clear().env("PATH","/usr/bin:/bin").env("LOG_ROOT",std::env::var("LOG_ROOT").unwrap_or_else(|_|"/var/log".into())).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(err)?;
+ let script=temp.path().join("scanner.sh");fs::write(&script,include_str!("../security-log-scan-v3.sh")).map_err(err)?;
+ let output=std::process::Command::new("/usr/bin/timeout").args(["--kill-after=5s","300s","/bin/bash"]).arg(&script).args(["--format","text"]).current_dir(temp.path()).env_clear().env("PATH","/usr/bin:/bin").env("THRESHOLD",std::env::var("THRESHOLD").unwrap_or_else(|_|"20".into())).env("LOG_ROOT",std::env::var("LOG_ROOT").unwrap_or_else(|_|"/var/log".into())).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(err)?;
  if !output.status.success(){return Err(err(format!("Scan failed: {}",output.status)))}
  let entry=fs::read_dir(temp.path()).map_err(err)?.filter_map(Result::ok).find(|e|valid_name(&e.file_name().to_string_lossy())).ok_or_else(||err("Scanner produced no report"))?;
  let name=entry.file_name().to_string_lossy().into_owned();let p=entry.path();if fs::metadata(&p).map_err(err)?.len()>10*1024*1024{return Err(err("Generated report exceeds 10 MiB"))}let raw=fs::read_to_string(&p).map_err(err)?;let report=parse(&raw).map_err(err)?;
@@ -86,7 +98,10 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  let mut report=report;if !warning.is_empty(){report.warnings.push(warning.clone());}let raw=if warning.is_empty(){raw}else{format!("{}\n=== Scan diagnostics ===\n{}\n",raw,warning)};use std::io::Write;let mut f=fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dir.join(&name)).map_err(err)?;f.write_all(raw.as_bytes()).map_err(err)?;Ok(Json(ScanResult{name,report,warning}))
  }).await.map_err(err)?
 }
-#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved).delete(delete_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
+async fn download_scanner() -> impl axum::response::IntoResponse {
+ ([(axum::http::header::CONTENT_TYPE,"application/octet-stream"),(axum::http::header::CONTENT_DISPOSITION,"attachment; filename=\"security-log-scan-v3.sh\""),(axum::http::header::X_CONTENT_TYPE_OPTIONS,"nosniff")],include_str!("../security-log-scan-v3.sh"))
+}
+#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/download/scanner",get(download_scanner)).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved).delete(delete_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
 #[cfg(test)] mod tests{use super::*;#[test]fn invalid(){assert!(parse("hello").is_err());}#[test]fn fixture(){let r=parse(include_str!("../sample-report.txt")).unwrap();assert_eq!(r.ips.len(),2);assert_eq!(r.ips[0].counts["suspicious_2xx"],1);assert_eq!(r.ips[1].ip.to_string(),"80.66.83.67");}}
 
 #[cfg(test)] mod deletion_tests {
@@ -111,3 +126,4 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  assert!(target.exists());
  }
 }
+

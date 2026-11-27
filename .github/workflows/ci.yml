@@ -11,3 +11,10 @@ jobs:
       - run: cargo test
       - run: cargo clippy --all-targets
       - run: bash -n security-log-scan-v2.sh
+      - run: bash -n security-log-scan-v3.sh
+      - name: Scanner v3 fixture
+        run: |
+          mkdir -p fixture output
+          printf '%s\n' '192.0.2.1 - - [27/Nov/2026:12:00:00 +0000] "GET /.env HTTP/1.1" 404 10' > fixture/access.log
+          LOG_ROOT="$PWD/fixture" bash security-log-scan-v3.sh --from 2026-11-27 --to 2026-11-27 --output output
+          python3 -c 'import glob,json; d=json.load(open(glob.glob("output/*.json")[0])); assert d["schema_version"]==3; assert d["scan_status"]=="partial"; assert d["coverage"]["access"]["lines"]==1; assert d["threats"][0]["ip"]=="192.0.2.1"'

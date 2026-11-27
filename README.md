@@ -4,12 +4,24 @@ A lightweight local security reporting dashboard built with **Rust**, **Axum** a
 
 ## Features
 
-- **Run Security Scan** invokes the bundled `security-log-scan-v2.sh` on the host and shows its parsed results.
-- **Upload Report** parses existing v2 scanner text reports (up to 10 MiB) without saving the upload.
+- **Run Security Scan** invokes the bundled `security-log-scan-v3.sh` on the host and shows its parsed results.
+- **Upload Report** parses existing v2 and v3 text or v3 JSON reports (up to 10 MiB) without saving the upload.
 - **Saved Reports** keeps generated reports in `reports/`, allowing them to be opened after a restart.
 - Severity overview, correlated IP analysis, request counters, searchable/filterable results, and sample evidence.
 - Print the dashboard or save it to PDF using your browser.
 - No JavaScript toolchain, database, or third-party log service required.
+
+## Scanner v3.0 reliability
+
+Python 3 is required by the standalone Bash scanner. The original v2 script remains available in the repository. The integrated scanner saves text; manual scans default to both text and JSON.
+
+```bash
+bash security-log-scan-v3.sh --help
+bash security-log-scan-v3.sh --days 7 --format both
+bash security-log-scan-v3.sh --from 2026-11-20 --to 2026-11-27 --output .
+```
+
+The default scans all matching retained files, bounded by 64 MiB of decompressed input and a best-effort 120-second collection deadline. The integrated viewer also retains its external five-minute timeout. Date filtering supports Apache timestamps and ISO timestamps; yearless syslog and other unrecognised dates are excluded and counted, not guessed. The v3 collector does not currently read journald; journal-only hosts will show missing authentication coverage. Missing, unreadable or truncated sources produce partial coverage. JSON includes metadata, structured IP counters and the compatible report text; the viewer currently renders the report text and coverage warning. No logs are changed.
 
 ## Requirements
 
@@ -33,8 +45,8 @@ Open **http://127.0.0.1:8080**. The application binds to loopback only. Try `sam
 Use **Download security scanner** in the dashboard to obtain the exact bundled Bash script. Transfer it securely to the Linux host to be scanned, review it, and open a terminal there. From the directory containing the script:
 
 ```bash
-chmod 700 security-log-scan-v2.sh
-script="$(realpath security-log-scan-v2.sh)"
+chmod 700 security-log-scan-v3.sh
+script="$(realpath security-log-scan-v3.sh)"
 mkdir -p ~/security-reports
 chmod 700 ~/security-reports
 cd ~/security-reports
@@ -90,7 +102,7 @@ Open http://127.0.0.1:8080 locally. The scanner reads the **server's own** `/var
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-bash -n security-log-scan-v2.sh
+bash -n security-log-scan-v3.sh
 ```
 
 ## License
