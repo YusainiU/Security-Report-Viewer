@@ -65,6 +65,24 @@ fn read_saved(n:&str)->Result<Report,ApiError>{
  if !valid_name(n){return Err((StatusCode::BAD_REQUEST,"Invalid report name".into()))}let p=store()?.join(n);let m=fs::symlink_metadata(&p).map_err(err)?;if !m.is_file()||m.len()>10*1024*1024{return Err(err("Invalid or oversized report"))}parse(&fs::read_to_string(p).map_err(err)?).map_err(err)
 }
 async fn open_saved(Path(n):Path<String>)->Result<Json<Report>,ApiError>{read_saved(&n).map(Json)}
+fn delete_report(dir: &std::path::Path, name: &str) -> Result<(), ApiError> {
+ if !valid_name(name) { return Err((StatusCode::BAD_REQUEST, "Invalid report name".into())); }
+ let path = dir.join(name);
+ let map_error = |e: std::io::Error| if e.kind() == std::io::ErrorKind::NotFound {
+ (StatusCode::NOT_FOUND, "Report not found".into())
+ } else { err(e) };
+ let metadata = fs::symlink_metadata(&path).map_err(map_error)?;
+ if !metadata.is_file() { return Err((StatusCode::BAD_REQUEST, "Not a regular report file".into())); }
+ fs::remove_file(path).map_err(map_error)
+}
+async fn delete_saved(headers: axum::http::HeaderMap, Path(name): Path<String>) -> Result<StatusCode, ApiError> {
+ if headers.get("x-local-scan").and_then(|v| v.to_str().ok()) != Some("1") {
+ return Err((StatusCode::FORBIDDEN, "Use the local dashboard to delete reports".into()));
+ }
+ let _guard = SCAN_LOCK.try_lock().map_err(|_| (StatusCode::CONFLICT, "A scan is running; try again later".into()))?;
+ delete_report(&store()?, &name)?;
+ Ok(StatusCode::NO_CONTENT)
+}
 #[derive(Serialize)] struct ScanResult {name:String, report:Report, warning:String}
 async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  if headers.get("x-local-scan").and_then(|v|v.to_str().ok())!=Some("1"){return Err((StatusCode::FORBIDDEN,"Use the local dashboard to run scans".into()))}
@@ -80,24 +98,28 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  let mut report=report;if !warning.is_empty(){report.warnings.push(warning.clone());}let raw=if warning.is_empty(){raw}else{format!("{}\n=== Scan diagnostics ===\n{}\n",raw,warning)};use std::io::Write;let mut f=fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dir.join(&name)).map_err(err)?;f.write_all(raw.as_bytes()).map_err(err)?;Ok(Json(ScanResult{name,report,warning}))
  }).await.map_err(err)?
 }
-async fn download_scanner() -> impl axum::response::IntoResponse {
- ([
- (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
- (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"security-log-scan-v3.sh\""),
- (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
- ], include_str!("../security-log-scan-v3.sh"))
-}
-#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/download/scanner",get(download_scanner)).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
+#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved).delete(delete_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
 #[cfg(test)] mod tests{use super::*;#[test]fn invalid(){assert!(parse("hello").is_err());}#[test]fn fixture(){let r=parse(include_str!("../sample-report.txt")).unwrap();assert_eq!(r.ips.len(),2);assert_eq!(r.ips[0].counts["suspicious_2xx"],1);assert_eq!(r.ips[1].ip.to_string(),"80.66.83.67");}}
 
-#[cfg(test)] mod download_tests {
+#[cfg(test)] mod deletion_tests {
  use super::*;
- use axum::response::IntoResponse;
- #[tokio::test] async fn scanner_download_matches_embedded_script() {
- let response=download_scanner().await.into_response();
- assert_eq!(response.status(),StatusCode::OK);
- assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION],"attachment; filename=\"security-log-scan-v3.sh\"");
- let bytes=axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
- assert_eq!(bytes.as_ref(),include_bytes!("../security-log-scan-v3.sh"));
+ #[test] fn deletes_only_selected_report() {
+ let dir=tempfile::tempdir().unwrap();
+ let name="security-report-test.txt";
+ fs::write(dir.path().join(name),"report").unwrap();
+ fs::write(dir.path().join("other.txt"),"keep").unwrap();
+ assert!(delete_report(dir.path(),name).is_ok());
+ assert!(!dir.path().join(name).exists());
+ assert!(dir.path().join("other.txt").exists());
+ assert_eq!(delete_report(dir.path(),name).unwrap_err().0,StatusCode::NOT_FOUND);
+ assert_eq!(delete_report(dir.path(),"../other.txt").unwrap_err().0,StatusCode::BAD_REQUEST);
+ }
+ #[test] fn rejects_symlink() {
+ let dir=tempfile::tempdir().unwrap();
+ let target=dir.path().join("other.txt");
+ fs::write(&target,"keep").unwrap();
+ std::os::unix::fs::symlink(&target,dir.path().join("security-report-link.txt")).unwrap();
+ assert_eq!(delete_report(dir.path(),"security-report-link.txt").unwrap_err().0,StatusCode::BAD_REQUEST);
+ assert!(target.exists());
  }
 }

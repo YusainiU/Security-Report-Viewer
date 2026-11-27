@@ -82,6 +82,8 @@ This expands access to sensitive logs. Do not run the web server as root or expo
 
 Automatically generated files are written into `reports/` beneath the process's working directory. The directory is created with mode `0700`, and reports with `0600` permissions. It is ignored by Git. Uploaded reports are parsed in memory only. Report text can include IP addresses and sensitive request paths; protect backups and delete reports according to your retention policy.
 
+To permanently remove a saved report, select it in **Saved Reports**, click **Delete report**, and confirm. The list refreshes automatically. Only the selected generated report is deleted; original system logs are untouched. Deletion is unavailable during a running scan.
+
 ## Connecting to a remote Ubuntu server
 
 Run the Rust app on the server, then from your computer:
