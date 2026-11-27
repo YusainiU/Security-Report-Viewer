@@ -123,3 +123,8 @@ Environment=APP_PORT=9080
 ```
 
 After installing the updated executable, run `sudo systemctl daemon-reload` and `sudo systemctl restart security-report-viewer`. Verify with `sudo ss -ltnp 'sport = :9080'`. From your local computer use `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:127.0.0.1:9080 your-username@your-server-ip` and visit http://localhost:9080. No public firewall rule is needed. If the port is occupied, choose another free port; startup reports the error and exits without a panic.
+
+
+## IP investigation dashboard
+
+Search and filter across the full report, sort by severity, probes, SSH failures or IP address, and choose 25, 50, 100 or 250 rows per page. Use the page controls to navigate. Select an IP to view all counters, assessment, matching retained sample evidence and reputation link in the sticky details pane (stacked on narrow screens). Copy IP uses browser clipboard support. Sample evidence is limited and does not represent every detection. Printing includes the current IP page and selected details, not all IP rows. The full parsed report remains in browser memory; pagination is client-side.
