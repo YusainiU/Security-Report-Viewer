@@ -10,7 +10,7 @@ This guide installs Security Report Viewer on a remote Ubuntu server as an unpri
 | Remote Rust service with SSH forwarding (recommended) | Regular private access to server reports |
 | Apache HTTPS reverse proxy | Only after implementing appropriate authentication and security controls |
 
-The current application has no built-in authentication. Do not expose port 8080 publicly. Loopback binding does not protect against other local users or all browser-origin attacks; use a trusted single-administrator host and browser environment. SSH access must be restricted to trusted users.
+The current application has no built-in authentication. Do not expose the application listening port publicly. Loopback binding does not protect against other local users or all browser-origin attacks; use a trusted single-administrator host and browser environment. SSH access must be restricted to trusted users.
 
 ## 1. Install prerequisites
 
@@ -154,9 +154,123 @@ Existing reports are retained. If the new service fails, restore the previous bi
 - Connection refused: check systemd status, the loopback listener and the SSH tunnel.
 - SSH forwarding denied: ask the SSH administrator to check forwarding policy; do not weaken SSH security indiscriminately.
 - Incomplete scans: check the service account's group membership and log permissions; use the standalone scanner if needed.
-- Port conflict: use a different local forwarded port; a remote port conflict must be resolved on the server.
+- Port conflict: distinguish local and remote listeners; see section 8.1.
 - Stop or disable the service with sudo systemctl disable --now security-report-viewer.
 - Follow service logs with sudo journalctl -u security-report-viewer -f.
+
+
+### 8.1 Remote port 8080 already in use
+
+Observed during deployment:
+
+```text
+Cannot bind port 8080: Os { code: 98, kind: AddrInUse, message: "Address already in use" }
+Main process exited, code=exited, status=101/n/a
+```
+
+Older binaries panic with exit status 101; updated binaries report a friendly startup error and exit with status 1. With Restart=on-failure, systemd may repeatedly restart the service.
+
+Stop the restart cycle and identify the existing listener:
+
+```bash
+sudo systemctl stop security-report-viewer
+sudo ss -ltnp 'sport = :8080'
+sudo ss -ltnp 'sport = :9080'
+```
+
+Do not terminate an unknown process. If 9080 is free, install the updated binary supporting APP_PORT (see section 7; keep the service stopped until configuration is corrected). Then run:
+
+```bash
+sudo systemctl edit security-report-viewer
+```
+
+Insert only the following in the editable area above the discard marker, without Markdown fences:
+
+```ini
+[Service]
+Environment=APP_PORT=9080
+```
+
+This creates /etc/systemd/system/security-report-viewer.service.d/override.conf. Alternatively, add Environment=APP_PORT=9080 to the existing [Service] section in the original unit file; use one approach, not both.
+
+Validate and restart using the commands in section 8.2 below. From your local computer, forward the new remote port:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:127.0.0.1:9080 your-username@your-server-ip
+```
+
+Visit http://localhost:9080. Changing only the local forwarded port does not resolve a remote listening-port conflict.
+
+### 8.2 Bad unit file setting — duplicate ExecStart
+
+Observed during deployment after editing the service configuration:
+
+```text
+Failed to restart security-report-viewer.service: Unit security-report-viewer.service has a bad unit file setting.
+```
+
+The verification command identified the cause:
+
+```text
+Service has more than one ExecStart= setting, which is only allowed for Type=oneshot services. Refusing.
+```
+
+The service uses Type=simple, so only one effective ExecStart command is allowed. Copying the entire original unit into a drop-in override can cause this problem. Systemd merges the original unit and its drop-ins.
+
+Inspect both files:
+
+```bash
+sudo systemctl cat security-report-viewer
+sudo systemd-analyze verify security-report-viewer.service
+```
+
+The original file, /etc/systemd/system/security-report-viewer.service, should retain the full configuration from section 4, including exactly one ExecStart=/opt/security-report-viewer/security-report-viewer.
+
+If the port override was created solely for APP_PORT, edit it:
+
+```bash
+sudo nano /etc/systemd/system/security-report-viewer.service.d/override.conf
+```
+
+Replace its contents with only:
+
+```ini
+[Service]
+Environment=APP_PORT=9080
+```
+
+If the drop-in contains other intentional customizations, preserve them and remove only the unintended duplicate ExecStart or duplicated unit settings. If the duplicate is in the original unit or another drop-in, correct that file instead. Do not change Type to oneshot to bypass the error.
+
+Reload and validate:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemd-analyze verify security-report-viewer.service
+```
+
+Once the service-specific errors are resolved:
+
+```bash
+sudo systemctl reset-failed security-report-viewer
+sudo systemctl restart security-report-viewer
+sudo systemctl status security-report-viewer
+sudo systemctl show security-report-viewer -p Environment
+sudo ss -ltnp 'sport = :9080'
+curl -I http://127.0.0.1:9080
+```
+
+Expected: active (running), APP_PORT=9080, a listener on 127.0.0.1:9080 and a successful HTTP response. Substitute your chosen port if different. No Rust rebuild is needed to fix duplicate unit settings, provided the installed binary already supports APP_PORT.
+
+### 8.3 Unrelated CPUAccounting warning
+
+The same verification also reported:
+
+```text
+/usr/lib/systemd/system/system-xfs_scrub.slice:15: Support for option CPUAccounting= has been removed and it is ignored
+```
+
+This warning concerns an unrelated Ubuntu system unit, not Security Report Viewer. It can be ignored for this deployment; do not edit the distribution-managed unit merely to fix this application. Resolve the duplicate ExecStart error first.
+
 
 ## 9. Public HTTPS deployment is not recommended yet
 
