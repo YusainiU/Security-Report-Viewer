@@ -101,7 +101,25 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
 async fn download_scanner() -> impl axum::response::IntoResponse {
  ([(axum::http::header::CONTENT_TYPE,"application/octet-stream"),(axum::http::header::CONTENT_DISPOSITION,"attachment; filename=\"security-log-scan-v3.sh\""),(axum::http::header::X_CONTENT_TYPE_OPTIONS,"nosniff")],include_str!("../security-log-scan-v3.sh"))
 }
-#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/download/scanner",get(download_scanner)).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved).delete(delete_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
+fn parse_port(value:&str)->Result<u16,String>{
+ value.parse::<u16>().ok().filter(|port|*port!=0).ok_or_else(||"APP_PORT must be an integer from 1 to 65535".into())
+}
+#[cfg(test)] mod port_tests {
+ use super::*;
+ #[test] fn valid_ports(){assert_eq!(parse_port("8080"),Ok(8080));assert_eq!(parse_port("9080"),Ok(9080));assert_eq!(parse_port("65535"),Ok(65535));}
+ #[test] fn invalid_ports(){for value in ["","0","65536","-1","abc"," 8080"]{assert!(parse_port(value).is_err());}}
+}
+#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){eprintln!("ERROR: Run as an unprivileged user, not root");std::process::exit(1)} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/download/scanner",get(download_scanner)).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved).delete(delete_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let port=match std::env::var("APP_PORT") {
+ Ok(value)=>match parse_port(&value){Ok(port)=>port,Err(message)=>{eprintln!("ERROR: {message}");std::process::exit(1)}},
+ Err(std::env::VarError::NotPresent)=>8080,
+ Err(e)=>{eprintln!("ERROR: Cannot read APP_PORT: {e}");std::process::exit(1)}
+ };
+ let listener=match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,port)).await {
+ Ok(listener)=>listener,
+ Err(e)=>{eprintln!("ERROR: Cannot bind 127.0.0.1:{port}: {e}");if e.kind()==std::io::ErrorKind::AddrInUse{eprintln!("Port {port} is already in use. Choose a free port using APP_PORT, e.g. APP_PORT=9080 ./security-report-viewer");}std::process::exit(1)}
+ };
+ println!("Security Report Viewer: http://127.0.0.1:{port}");
+ if let Err(e)=axum::serve(listener,app).await{eprintln!("ERROR: Server failed: {e}");std::process::exit(1)}}
 #[cfg(test)] mod tests{use super::*;#[test]fn invalid(){assert!(parse("hello").is_err());}#[test]fn fixture(){let r=parse(include_str!("../sample-report.txt")).unwrap();assert_eq!(r.ips.len(),2);assert_eq!(r.ips[0].counts["suspicious_2xx"],1);assert_eq!(r.ips[1].ip.to_string(),"80.66.83.67");}}
 
 #[cfg(test)] mod deletion_tests {
