@@ -2,6 +2,8 @@
 
 A lightweight local security reporting dashboard built with **Rust**, **Axum** and a bundled **Bash** log scanner. Analyse server logs without sending them to an external service.
 
+Read [About Security Report Viewer](ABOUT.md) for the project overview and [LICENCE](LICENCE) for licensing terms.
+
 ## Features
 
 - **Run Security Scan** invokes the bundled `security-log-scan-v3.sh` on the host and shows its parsed results.
