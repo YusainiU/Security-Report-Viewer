@@ -345,6 +345,60 @@ No. Inspect the Scan coverage and metadata section in the generated report. Chec
 
 Analyse report parses an existing uploaded TXT or JSON report and displays its findings; it does not scan system logs. Run security scan executes the integrated scanner on the host running the Rust service, saves a new TXT report and displays the parsed findings. Neither operation automatically blocks IP addresses or modifies system logs.
 
+### Why does the browser still display the old interface after rebuilding and deploying?
+
+Confirmed during the Ubuntu deployment on 27 November 2026 after updating the IP investigation dashboard. Git was up to date, the new HTML was embedded in the installed binary, and the build and installed checksums matched. However, the running process still referenced the old executable:
+
+```text
+/proc/33878/exe -> '/opt/security-report-viewer/security-report-viewer (deleted)'
+```
+
+The running executable and installed executable had different SHA-256 checksums. Linux permits a process to continue executing an old file after it has been replaced on disk. The precise reason the earlier restart did not replace that process was not established.
+
+Diagnose on the remote server (substitute your clone directory and configured port):
+
+```bash
+cd /var/www/security-report-viewer
+git log -5 --oneline
+grep -o 'id="pagesize"' index.html
+sha256sum target/release/security-report-viewer /opt/security-report-viewer/security-report-viewer
+strings /opt/security-report-viewer/security-report-viewer | grep -o 'id="pagesize"'
+curl -fsS http://127.0.0.1:9080/ | grep -o 'id="pagesize"'
+sudo ss -ltnp 'sport = :9080'
+sudo systemctl show security-report-viewer -p MainPID -p ExecStart -p WorkingDirectory -p ActiveState
+```
+
+The pagesize marker is specific to the new IP dashboard. Use an appropriate marker for future changes. Confirm that the listener PID matches the service MainPID before proceeding. If it does not, investigate the other process; do not kill an unidentified listener.
+
+```bash
+PID=$(systemctl show security-report-viewer -p MainPID --value)
+sudo ls -l "/proc/$PID/exe"
+sudo sha256sum "/proc/$PID/exe" /opt/security-report-viewer/security-report-viewer
+```
+
+If the installed binary is correct but the running one is stale, no rebuild is needed. Stop the service and check the port:
+
+```bash
+sudo systemctl stop security-report-viewer
+sudo ss -ltnp 'sport = :9080'
+```
+
+Proceed only if the listener has disappeared. Otherwise investigate the remaining process. Start and verify:
+
+```bash
+sudo systemctl start security-report-viewer
+sudo systemctl status security-report-viewer
+PID=$(systemctl show security-report-viewer -p MainPID --value)
+sudo sha256sum "/proc/$PID/exe" /opt/security-report-viewer/security-report-viewer
+curl -fsS http://127.0.0.1:9080/ | grep -o 'id="pagesize"'
+```
+
+The checksums should match and the HTTP response should contain the marker. Refresh the local browser with Ctrl+F5. This stop, listener check, start and verification sequence resolved the observed issue. Existing reports and SSH configuration were preserved.
+
+### Will this happen every time I update the application?
+
+No. Application source changes (including embedded HTML, CSS, JavaScript and scanner changes) require rebuilding and deploying the executable; documentation-only changes do not. Follow section 7, but explicitly verify that stopping the service releases its configured port before replacing the binary. After starting, compare the running executable checksum with the installed file and check the remote HTTP response. A normal successful restart loads the new binary; a stale process is not an expected part of every deployment. If the service fails to start, inspect its journal and use the rollback procedure in section 7. An automated deployment script could enforce these checks, but is not included in this guide.
+
 ## Verification
 
 This is a manual deployment guide, not an automated installer. The configuration should be validated on the target Ubuntu host before relying on it. No deployment is performed by this document.
