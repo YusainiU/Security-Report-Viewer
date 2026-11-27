@@ -108,3 +108,18 @@ bash -n security-log-scan-v3.sh
 ## License
 
 No license has been granted in this repository yet. Add a `LICENSE` file before distributing or accepting outside contributions.
+
+## Configurable listening port
+
+The application listens only on IPv4 loopback (127.0.0.1). Set `APP_PORT` to a free TCP port (1–65535); the default is 8080. `LOG_ROOT` defaults to /var/log and `THRESHOLD` defaults to 20.
+
+For local development: `APP_PORT=9080 cargo run --release`.
+
+For systemd, run `sudo systemctl edit security-report-viewer` and add:
+
+```ini
+[Service]
+Environment=APP_PORT=9080
+```
+
+After installing the updated executable, run `sudo systemctl daemon-reload` and `sudo systemctl restart security-report-viewer`. Verify with `sudo ss -ltnp 'sport = :9080'`. From your local computer use `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:127.0.0.1:9080 your-username@your-server-ip` and visit http://localhost:9080. No public firewall rule is needed. If the port is occupied, choose another free port; startup reports the error and exits without a panic.
