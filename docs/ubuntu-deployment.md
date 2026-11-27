@@ -130,6 +130,22 @@ Reports are stored in /opt/security-report-viewer/reports/. Keep this directory 
 
 ## 7. Update the application
 
+### 7.1 Automated update (recommended for existing installations)
+
+From the remote clone, as your normal deployment account (not root):
+
+```bash
+git switch main
+git pull --ff-only origin main
+bash deploy/update.sh 9080
+```
+
+Use your actual remote service port; omitting the argument defaults to 8080. The script is for the standard existing systemd installation under /opt/security-report-viewer, not first-time installation. It requires sudo, flock, ss, curl, Git and Cargo. It checks tracked changes, requires main, locks against concurrent updates, verifies the existing service and listener, pulls, tests and builds before stopping the service. It backs up the installed executable to .previous, checks the port is released, installs the new executable, starts the service and verifies the running executable matches the installed file, listener ownership and HTTP response. If installation or startup fails it attempts rollback, provided the service can be stopped and the port is free. If the stop itself fails, it leaves the binary unchanged and requests manual investigation. Check the service journal if recovery fails. Untracked files (including Cargo.lock) are retained. Reports, service settings and SSH configuration are not modified. There is brief downtime; avoid updating during a scan. The script is not a full application functional test.
+
+The initial git pull obtains the script itself; subsequent updates can use bash deploy/update.sh 9080 directly. Review incoming code before building. Refresh the browser after success.
+
+### 7.2 Manual update and rollback
+
 ```bash
 cd ~/applications/Security-Report-Viewer
 git switch main
@@ -397,7 +413,7 @@ The checksums should match and the HTTP response should contain the marker. Refr
 
 ### Will this happen every time I update the application?
 
-No. Application source changes (including embedded HTML, CSS, JavaScript and scanner changes) require rebuilding and deploying the executable; documentation-only changes do not. Follow section 7, but explicitly verify that stopping the service releases its configured port before replacing the binary. After starting, compare the running executable checksum with the installed file and check the remote HTTP response. A normal successful restart loads the new binary; a stale process is not an expected part of every deployment. If the service fails to start, inspect its journal and use the rollback procedure in section 7. An automated deployment script could enforce these checks, but is not included in this guide.
+No. Application source changes (including embedded HTML, CSS, JavaScript and scanner changes) require rebuilding and deploying the executable; documentation-only changes do not. Follow section 7, but explicitly verify that stopping the service releases its configured port before replacing the binary. After starting, compare the running executable checksum with the installed file and check the remote HTTP response. A normal successful restart loads the new binary; a stale process is not an expected part of every deployment. If the service fails to start, inspect its journal and use the rollback procedure in section 7. The automated update script in section 7.1 enforces these checks.
 
 ## Verification
 
