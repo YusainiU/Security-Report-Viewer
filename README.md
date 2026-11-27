@@ -1,5 +1,74 @@
 # Security Report Viewer
 
-Rust-based security log reporting dashboard.
+A lightweight local security reporting dashboard built with **Rust**, **Axum** and a bundled **Bash** log scanner. Analyse server logs without sending them to an external service.
 
-The complete application (Rust server, embedded Bash scanner, interactive dashboard, sample report, and documentation) is being prepared on the `feature/initial-rust-application` branch.
+## Features
+
+- **Run Security Scan** invokes the bundled `security-log-scan-v2.sh` on the host and shows its parsed results.
+- **Upload Report** parses existing v2 scanner text reports (up to 10 MiB) without saving the upload.
+- **Saved Reports** keeps generated reports in `reports/`, allowing them to be opened after a restart.
+- Severity overview, correlated IP analysis, request counters, searchable/filterable results, and sample evidence.
+- Print the dashboard or save it to PDF using your browser.
+- No JavaScript toolchain, database, or third-party log service required.
+
+## Requirements
+
+- Linux (Ubuntu / WSL Ubuntu supported)
+- Rust stable and Cargo (install with [rustup](https://rustup.rs/))
+- Bash, `awk`, `grep`, `find`, `sort`, `gzip`, `timeout`, `journalctl` (optional fallback for authentication logs)
+- Permission to read the log files being scanned
+
+## Run locally
+
+```bash
+cargo check
+cargo test
+cargo run --release
+```
+
+Open **http://127.0.0.1:8080**. The application binds to loopback only. Try `sample-report.txt` before scanning live logs.
+
+## Scan configuration
+
+```bash
+LOG_ROOT=/var/log THRESHOLD=20 cargo run --release
+```
+
+`LOG_ROOT` selects a local directory to scan. `THRESHOLD` sets the repeated-event threshold passed to the scanner (default: 20). Only the bundled script is executable through the application. The scanner runs as the same **unprivileged** OS account as the Rust server, has a five-minute timeout, and permits only one concurrent scan.
+
+The log files may not all be readable to your account. On Ubuntu, membership in the trusted `adm` group grants access to many logs (re-login required):
+
+```bash
+sudo usermod -aG adm "$USER"
+```
+
+This expands access to sensitive logs. Do not run the web server as root or expose it publicly to make scanning easier. Missing log permissions can cause incomplete results.
+
+## Saved report storage
+
+Automatically generated files are written into `reports/` beneath the process's working directory. The directory is created with mode `0700`, and reports with `0600` permissions. It is ignored by Git. Uploaded reports are parsed in memory only. Report text can include IP addresses and sensitive request paths; protect backups and delete reports according to your retention policy.
+
+## Connecting to a remote Ubuntu server
+
+Run the Rust app on the server, then from your computer:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@server
+```
+
+Open http://127.0.0.1:8080 locally. The scanner reads the **server's own** `/var/log`, not the browser's computer logs.
+
+**Security:** The viewer has no authentication. Never expose port 8080 to the public internet or reverse proxy it publicly. Keep the loopback bind, and access remotely over SSH. Scan results are heuristic; suspicious HTTP 2xx/5xx responses and SSH activity do not prove a compromise. No firewall rules are altered, and the scanner does not delete logs.
+
+## Development
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+bash -n security-log-scan-v2.sh
+```
+
+## License
+
+No license has been granted in this repository yet. Add a `LICENSE` file before distributing or accepting outside contributions.
