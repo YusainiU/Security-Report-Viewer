@@ -1,0 +1,19 @@
+SECURITY LOG SCAN v2.0 — 2026-11-27T11:00:00+00:00
+Source: /var/log (all retained matching logs; journal fallback: 24 hours)
+Heuristic findings only; verify before blocking addresses.
+auth input lines: 0
+access input lines: 2
+firewall input lines: 0
+other input lines: 0
+=== Sensitive file / exploit probes ===
+Matching lines: 1
+192.0.2.1 - - [27/Nov/2026:10:00:00 +0000] "GET /.env HTTP/1.1" 200 100
+=== Possible SQL injection ===
+Matching lines: 1
+80.66.83.67 - - [23/Nov/2026:15:50:11 +0000] "GET /rest/wikis/xwiki/query?q=union%20select HTTP/1.1" 404 4458
+=== Correlated threat analysis by IP ===
+HIGH IP=192.0.2.1 probes=1 SQL=0 sensitive=1 XSS/traversal=0 suspicious_2xx=1 suspicious_5xx=0 suspicious_403/404=0 other_status=0 SSH_fail=0 SSH_ok=0 SSH_ok_after_failure_in_input=0 HTTP_total=1 HTTP_403/404=0 HTTP_5xx=0 firewall=0
+MEDIUM IP=80.66.83.67 probes=1 SQL=1 sensitive=0 XSS/traversal=0 suspicious_2xx=0 suspicious_5xx=0 suspicious_403/404=1 other_status=0 SSH_fail=0 SSH_ok=0 SSH_ok_after_failure_in_input=0 HTTP_total=1 HTTP_403/404=1 HTTP_5xx=0 firewall=0
+=== CRITICAL: recorded malware detections (not IP attributed) ===
+=== Malware detection records ===
+Matching lines: 0
