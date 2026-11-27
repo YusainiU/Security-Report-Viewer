@@ -68,5 +68,24 @@ async fn scan(headers:axum::http::HeaderMap)->Result<Json<ScanResult>,ApiError>{
  let mut report=report;if !warning.is_empty(){report.warnings.push(warning.clone());}let raw=if warning.is_empty(){raw}else{format!("{}\n=== Scan diagnostics ===\n{}\n",raw,warning)};use std::io::Write;let mut f=fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(dir.join(&name)).map_err(err)?;f.write_all(raw.as_bytes()).map_err(err)?;Ok(Json(ScanResult{name,report,warning}))
  }).await.map_err(err)?
 }
-#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
+async fn download_scanner() -> impl axum::response::IntoResponse {
+ ([
+ (axum::http::header::CONTENT_TYPE, "application/octet-stream"),
+ (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"security-log-scan-v2.sh\""),
+ (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+ ], include_str!("../security-log-scan-v2.sh"))
+}
+#[tokio::main] async fn main(){if std::process::Command::new("id").arg("-u").output().map(|o|o.stdout==b"0\n").unwrap_or(true){panic!("Run as an unprivileged user, not root")} let app=Router::new().route("/",get(||async{Html(include_str!("../index.html"))})).route("/download/scanner",get(download_scanner)).route("/parse",post(upload)).route("/scan",post(scan)).route("/reports",get(saved)).route("/reports/{name}",get(open_saved)).layer(DefaultBodyLimit::max(10*1024*1024));let listener=tokio::net::TcpListener::bind("127.0.0.1:8080").await.expect("Cannot bind port 8080");println!("Security Report Viewer: http://127.0.0.1:8080");axum::serve(listener,app).await.unwrap();}
 #[cfg(test)] mod tests{use super::*;#[test]fn invalid(){assert!(parse("hello").is_err());}#[test]fn fixture(){let r=parse(include_str!("../sample-report.txt")).unwrap();assert_eq!(r.ips.len(),2);assert_eq!(r.ips[0].counts["suspicious_2xx"],1);assert_eq!(r.ips[1].ip.to_string(),"80.66.83.67");}}
+
+#[cfg(test)] mod download_tests {
+ use super::*;
+ use axum::response::IntoResponse;
+ #[tokio::test] async fn scanner_download_matches_embedded_script() {
+ let response=download_scanner().await.into_response();
+ assert_eq!(response.status(),StatusCode::OK);
+ assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION],"attachment; filename=\"security-log-scan-v2.sh\"");
+ let bytes=axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
+ assert_eq!(bytes.as_ref(),include_bytes!("../security-log-scan-v2.sh"));
+ }
+}
